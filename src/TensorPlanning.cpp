@@ -7,8 +7,6 @@
 
 // This code is copied from micro_allocator.cc because its in an anon namespace.
 
-#include "tensorflow/lite/micro/micro_allocator.h"
-
 #include <cstddef>
 #include <cstdint>
 
@@ -20,6 +18,7 @@
 #include "tensorflow/lite/micro/compatibility.h"
 #include "tensorflow/lite/micro/memory_helpers.h"
 #include "tensorflow/lite/micro/memory_planner/greedy_memory_planner.h"
+#include "tensorflow/lite/micro/micro_allocator.h"
 #include "tensorflow/lite/micro/simple_memory_allocator.h"
 
 namespace tflite {
@@ -211,18 +210,19 @@ TfLiteStatus AllocationInfoBuilder::AddScratchBuffers(
   return kTfLiteOk;
 }
 
-} // namespace
-} // namespace tflite
+}  // namespace
+}  // namespace tflite
 
-std::vector<TensorLifetime>
-GetTensorLifetimes(tflite::MicroInterpreter *interpreter) {
+std::vector<TensorLifetime> GetTensorLifetimes(
+    tflite::MicroInterpreter* interpreter) {
   auto error_reporter = interpreter->error_reporter_;
   auto subgraph = interpreter->subgraph_;
 
   auto numTensors = subgraph->tensors()->size();
 
   std::vector<uint8_t> buf(1024);
-  tflite::SimpleMemoryAllocator allocator(error_reporter, buf.data(), buf.size());
+  tflite::SimpleMemoryAllocator allocator(error_reporter, buf.data(),
+                                          buf.size());
 
   tflite::AllocationInfoBuilder builder(error_reporter, &allocator);
   builder.Init(numTensors, interpreter->allocator_.scratch_buffer_count_);
@@ -232,7 +232,7 @@ GetTensorLifetimes(tflite::MicroInterpreter *interpreter) {
 
   std::vector<TensorLifetime> out;
   for (int i = 0; i < numTensors; i++) {
-    auto &info = allocInfo[i];
+    auto& info = allocInfo[i];
     out.push_back({info.first_created, info.last_used, info.needs_allocating});
   }
   return out;

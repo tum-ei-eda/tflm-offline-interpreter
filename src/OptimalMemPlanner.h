@@ -6,7 +6,7 @@
 #include "tensorflow/lite/micro/memory_planner/memory_planner.h"
 
 class OptimalMemPlanner : public tflite::MemoryPlanner {
-public:
+ public:
   TfLiteStatus AddBuffer(tflite::ErrorReporter *error_reporter, int size,
                          int first_time_used, int last_time_used) override;
 
@@ -17,10 +17,10 @@ public:
   TfLiteStatus GetOffsetForBuffer(tflite::ErrorReporter *error_reporter,
                                   int buffer_index, int *offset) override;
 
-private:
+ private:
   void CalcIfNeeded();
 
-private:
+ private:
   bool m_needCalc = true;
   struct BufferInfo {
     int index;

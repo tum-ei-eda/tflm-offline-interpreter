@@ -1,22 +1,21 @@
 
-#include "tensorflow/lite/micro/kernels/all_ops_resolver.h"
-#include "tensorflow/lite/micro/micro_error_reporter.h"
-#include <sstream>
-#include "tensorflow/lite/micro/micro_interpreter.h"
-#include "tensorflow/lite/c/builtin_op_data.h"
-#include "tensorflow/lite/micro/memory_planner/greedy_memory_planner.h"
-#include "tensorflow/lite/schema/schema_generated.h"
-#include "tensorflow/lite/version.h"
-
-#include "OfflineOffset.h"
-#include "TensorPlanning.h"
-
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <set>
+#include <sstream>
+
+#include "OfflineOffset.h"
+#include "TensorPlanning.h"
+#include "tensorflow/lite/c/builtin_op_data.h"
+#include "tensorflow/lite/micro/kernels/all_ops_resolver.h"
+#include "tensorflow/lite/micro/memory_planner/greedy_memory_planner.h"
+#include "tensorflow/lite/micro/micro_error_reporter.h"
+#include "tensorflow/lite/micro/micro_interpreter.h"
+#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/version.h"
 
 std::string GetByteArrayCode(const void *data, size_t len) {
   std::stringstream out;
@@ -33,8 +32,8 @@ std::string FillCodeTemplate(const std::vector<char> &fb, size_t arenaSize,
                              const std::string &setupCode,
                              const std::string &evalCode, int numRegs,
                              int numOps, int numQuants, int intArrayBufSize,
-                             int floatArrayBufSize, int inputTensorIndex, int outputTensorIndex)
-{
+                             int floatArrayBufSize, int inputTensorIndex,
+                             int outputTensorIndex) {
   std::stringstream out;
   out << "// This file is generated. Do not edit.\n";
   {
@@ -133,7 +132,7 @@ void TestEval()
 
 // Tracks the last allocation size.
 class AllocatorToGetLastAllocSize : public tflite::BuiltinDataAllocator {
-public:
+ public:
   void *Allocate(size_t size, size_t alignment_hint) override {
     lastAllocSize = size;
     return malloc(size);
@@ -141,7 +140,7 @@ public:
   void Deallocate(void *data) override { free(data); }
   size_t GetLastAllocSize() { return lastAllocSize; }
 
-private:
+ private:
   size_t lastAllocSize = 0;
 };
 size_t GetBuiltinDataSize(tflite::BuiltinOperator opType,
@@ -157,10 +156,12 @@ size_t GetBuiltinDataSize(tflite::BuiltinOperator opType,
 }
 
 // Aligns a value v to the next value aligned by align bits.
-template <typename T> T Align(T v, T align) {
+template <typename T>
+T Align(T v, T align) {
   return (v + align - 1) & ~(align - 1);
 }
-template <typename T, typename U> T *Align(T *v, U align) {
+template <typename T, typename U>
+T *Align(T *v, U align) {
   return (T *)Align((uintptr_t)v, (uintptr_t)align);
 }
 
@@ -181,7 +182,8 @@ static size_t DryRunModelForAllocSize(const tflite::Model *model) {
   return requiredSize;
 }
 
-static bool Run(const std::string &modelFileName, const std::string &outFileName) {
+static bool Run(const std::string &modelFileName,
+                const std::string &outFileName) {
   tflite::MicroErrorReporter micro_error_reporter;
   tflite::ErrorReporter &error_reporter = micro_error_reporter;
 
@@ -196,9 +198,10 @@ static bool Run(const std::string &modelFileName, const std::string &outFileName
 
   const tflite::Model *model = tflite::GetModel(model_data.data());
   if (model->version() != TFLITE_SCHEMA_VERSION) {
-    error_reporter.Report("Model provided is schema version %d not equal "
-                          "to supported version %d.",
-                          model->version(), TFLITE_SCHEMA_VERSION);
+    error_reporter.Report(
+        "Model provided is schema version %d not equal "
+        "to supported version %d.",
+        model->version(), TFLITE_SCHEMA_VERSION);
     return false;
   }
 
@@ -240,8 +243,7 @@ static bool Run(const std::string &modelFileName, const std::string &outFileName
   printf("num tensors: %lu\n", interpreter.tensors_size());
   std::map<int, int> tensorToPlanBuffer;
   for (int i = 0; i < interpreter.tensors_size(); i++) {
-    if (!lifetimes[i].needsAlloc)
-      continue;
+    if (!lifetimes[i].needsAlloc) continue;
     size_t sz = Align(interpreter.tensor(i)->bytes, (size_t)16);
     planner.AddBuffer(&error_reporter, sz, lifetimes[i].firstUse,
                       lifetimes[i].lastUse);
@@ -260,7 +262,8 @@ static bool Run(const std::string &modelFileName, const std::string &outFileName
             << OfflineOffset(tensor_arena + planner.GetMaximumMemorySize())
                    .getPtrCode()
             << ";\n";
-  setupCode << "  for (size_t i = 0; i < " << interpreter.tensors_size() << "; i++) {\n";
+  setupCode << "  for (size_t i = 0; i < " << interpreter.tensors_size()
+            << "; i++) {\n";
   setupCode << "    TfLiteTensor *tensor = &g_ctx.tensors[i];\n";
   setupCode << "    *tensor = {};\n";
   setupCode << "    //ConvertTensorType();\n";
@@ -280,7 +283,8 @@ static bool Run(const std::string &modelFileName, const std::string &outFileName
     // TODO: Do these assignments offline. Tricky: ABI differences
     TfLiteType type;
     ConvertTensorType(tensors->Get(i)->type(), &type, &error_reporter);
-    setupCode << tensorI << ".type = (TfLiteType)" << type << "; // " << TfLiteTypeGetName(type) << "\n";
+    setupCode << tensorI << ".type = (TfLiteType)" << type << "; // "
+              << TfLiteTypeGetName(type) << "\n";
     setupCode << tensorI << ".is_variable = " << tensors->Get(i)->is_variable()
               << ";\n";
     setupCode << tensorI << ".allocation_type = "
@@ -288,7 +292,8 @@ static bool Run(const std::string &modelFileName, const std::string &outFileName
                       ? "kTfLiteMmapRo"
                       : "kTfLiteArenaRw")
               << ";\n";
-    setupCode << tensorI << ".bytes = " << interpreter.tensor(i)->bytes << ";\n";
+    setupCode << tensorI << ".bytes = " << interpreter.tensor(i)->bytes
+              << ";\n";
     setupCode << tensorI << ".dims = (TfLiteIntArray*)"
               << OfflineOffset(tensors->Get(i)->shape()).getPtrCode() << ";\n";
     auto quant = tensors->Get(i)->quantization();
@@ -304,9 +309,11 @@ static bool Run(const std::string &modelFileName, const std::string &outFileName
       std::string quantI = "  g_quants[" + std::to_string(numQuants) + "]";
       numQuants++;
       int channels = quant->scale()->size();
-      setupCode << quantI << ".zero_point = (TfLiteIntArray*)&g_intArrayBuf[" << intArrayBufSize << "];\n";
+      setupCode << quantI << ".zero_point = (TfLiteIntArray*)&g_intArrayBuf["
+                << intArrayBufSize << "];\n";
       intArrayBufSize += TfLiteIntArrayGetSizeInBytes(channels);
-      setupCode << quantI << ".scale = (TfLiteFloatArray*)&g_floatArrayBuf[" << floatArrayBufSize << "];\n";
+      setupCode << quantI << ".scale = (TfLiteFloatArray*)&g_floatArrayBuf["
+                << floatArrayBufSize << "];\n";
       floatArrayBufSize += TfLiteFloatArrayGetSizeInBytes(channels);
       setupCode << quantI << ".zero_point->size = " << channels << ";\n";
       setupCode << quantI << ".scale->size = " << channels << ";\n";
@@ -330,8 +337,7 @@ static bool Run(const std::string &modelFileName, const std::string &outFileName
     tflite::BuiltinOperator code;
     int version;
     bool operator<(const Op &op) const {
-      if (code == op.code)
-        return version < op.version;
+      if (code == op.code) return version < op.version;
       return code < op.code;
     }
     bool operator==(const Op &op) {
@@ -406,14 +412,14 @@ static bool Run(const std::string &modelFileName, const std::string &outFileName
   }
 
   // TODO: ABI incompatible
-  size_t totalTensorBufSize =
-      planner.GetMaximumMemorySize() + interpreter.tensors_size() * sizeof(TfLiteTensor);
+  size_t totalTensorBufSize = planner.GetMaximumMemorySize() +
+                              interpreter.tensors_size() * sizeof(TfLiteTensor);
 
   std::ofstream outFile(outFileName);
   outFile << FillCodeTemplate(model_data, totalTensorBufSize, setupCode.str(),
                               evalCode.str(), usedRegistrations.size(), nOps,
-                              numQuants, intArrayBufSize, floatArrayBufSize, inputTensorIndex,
-                              outputTensorIndex);
+                              numQuants, intArrayBufSize, floatArrayBufSize,
+                              inputTensorIndex, outputTensorIndex);
 
   printf("Required tensor memory: %lu\n", totalTensorBufSize);
 

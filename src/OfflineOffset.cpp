@@ -1,4 +1,5 @@
 #include "OfflineOffset.h"
+
 #include <cassert>
 
 const void *OfflineOffset::arenaBase = 0;
@@ -30,18 +31,19 @@ void OfflineOffset::set(const void *p) {
     m_type = Type::FB;
     m_offset = (uintptr_t)p - (uintptr_t)fbBase;
   } else {
-    assert(false && "OfflineOffset: Pointer must be in buffer that will be "
-                    "on the target!");
+    assert(false &&
+           "OfflineOffset: Pointer must be in buffer that will be "
+           "on the target!");
   }
 }
 
 std::string OfflineOffset::getPtrCode() const {
   switch (m_type) {
-  case Type::Null:
-    return "nullptr";
-  case Type::Arena:
-    return "(tensor_arena + " + std::to_string(m_offset) + ")";
-  case Type::FB:
-    return "(g_model_data + " + std::to_string(m_offset) + ")";
+    case Type::Null:
+      return "nullptr";
+    case Type::Arena:
+      return "(tensor_arena + " + std::to_string(m_offset) + ")";
+    case Type::FB:
+      return "(g_model_data + " + std::to_string(m_offset) + ")";
   }
 }

@@ -15,15 +15,14 @@ size_t OptimalMemPlanner::GetMaximumMemorySize() {
 
 int OptimalMemPlanner::GetBufferCount() { return 0; }
 
-TfLiteStatus
-OptimalMemPlanner::GetOffsetForBuffer(tflite::ErrorReporter *error_reporter,
-                                      int buffer_index, int *offset) {
+TfLiteStatus OptimalMemPlanner::GetOffsetForBuffer(
+    tflite::ErrorReporter *error_reporter, int buffer_index, int *offset) {
   CalcIfNeeded();
   return kTfLiteOk;
 }
 
 class AdjacencyMatrix {
-public:
+ public:
   AdjacencyMatrix(int numElems)
       : m_buf(numElems * numElems), m_numElems(numElems) {}
 
@@ -33,7 +32,7 @@ public:
   }
   bool isAdj(int i, int j) const { return m_buf[i * m_numElems + j] != 0; }
 
-private:
+ private:
   std::vector<int> m_buf;
   int m_numElems;
 };

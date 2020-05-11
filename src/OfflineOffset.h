@@ -6,7 +6,7 @@
 
 // Converts offsets between the offline interpreter and the target buffers.
 class OfflineOffset {
-public:
+ public:
   enum class Type { Null, Arena, FB };
 
   static void Init(void *arenaPtr, size_t arenaSz, const std::vector<char> &fb);
@@ -20,7 +20,7 @@ public:
 
   Type getType() const { return m_type; }
 
-private:
+ private:
   static const void *arenaBase;
   static size_t arenaLen;
   static const void *fbBase;
