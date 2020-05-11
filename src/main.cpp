@@ -181,7 +181,7 @@ static size_t DryRunModelForAllocSize(const tflite::Model *model) {
   return requiredSize;
 }
 
-static bool Run(const std::string &modelFileName) {
+static bool Run(const std::string &modelFileName, const std::string &outFileName) {
   tflite::MicroErrorReporter micro_error_reporter;
   tflite::ErrorReporter &error_reporter = micro_error_reporter;
 
@@ -409,7 +409,7 @@ static bool Run(const std::string &modelFileName) {
   size_t totalTensorBufSize =
       planner.GetMaximumMemorySize() + interpreter.tensors_size() * sizeof(TfLiteTensor);
 
-  std::ofstream outFile("../../../out/tflm_src/target_src.cc");
+  std::ofstream outFile(outFileName);
   outFile << FillCodeTemplate(model_data, totalTensorBufSize, setupCode.str(),
                               evalCode.str(), usedRegistrations.size(), nOps,
                               numQuants, intArrayBufSize, floatArrayBufSize, inputTensorIndex,
@@ -438,12 +438,12 @@ static bool Run(const std::string &modelFileName) {
 }
 
 int main(int argc, char *argv[]) {
-  if (argc != 2) {
-    printf("usage: %s modelFile.tflite\n", argv[0]);
+  if (argc != 3) {
+    printf("usage: %s modelFile.tflite outFile.cpp\n", argv[0]);
     return 1;
   }
 
-  if (!Run(argv[1])) {
+  if (!Run(argv[1], argv[2])) {
     return 1;
   }
 
