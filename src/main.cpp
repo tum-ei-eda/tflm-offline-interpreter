@@ -187,6 +187,7 @@ static bool Run(const std::string &modelFileName,
   tflite::MicroErrorReporter micro_error_reporter;
   tflite::ErrorReporter &error_reporter = micro_error_reporter;
 
+  // Load model flatbuffer.
   std::ifstream model_file(modelFileName, std::ios::binary | std::ios::ate);
   auto sz = model_file.tellg();
   model_file.seekg(0, std::ios::beg);
@@ -205,6 +206,9 @@ static bool Run(const std::string &modelFileName,
     return false;
   }
 
+  // Run the model once to get the arena size. This is done first because TFLM
+  // will also utilize buffers that start at the end of the buffer, which we
+  // want to directly translate.
   auto tensorArenaSize = DryRunModelForAllocSize(model);
   std::vector<uint8_t> tensorArena(tensorArenaSize + 16);
   uint8_t *tensor_arena = Align(tensorArena.data(), 16);
@@ -238,6 +242,7 @@ static bool Run(const std::string &modelFileName,
     return false;
   }
 
+  // Run memory planning. Planner may be replaced with a custom one.
   std::vector<uint8_t> plannerBuf(1024);
   tflite::GreedyMemoryPlanner planner(plannerBuf.data(), plannerBuf.size());
   printf("num tensors: %lu\n", interpreter.tensors_size());
@@ -333,6 +338,7 @@ static bool Run(const std::string &modelFileName,
   }
   setupCode << "\n";
 
+  // Find all used operations and only use those in the target code.
   struct Op {
     tflite::BuiltinOperator code;
     int version;
@@ -400,6 +406,7 @@ static bool Run(const std::string &modelFileName,
     }
   }
 
+  // Eval code: Just call into original operators.
   std::stringstream evalCode;
   for (int i = 0; i < nOps; i++) {
     // init and free are not implemented, so don't call them.
@@ -415,6 +422,7 @@ static bool Run(const std::string &modelFileName,
   size_t totalTensorBufSize = planner.GetMaximumMemorySize() +
                               interpreter.tensors_size() * sizeof(TfLiteTensor);
 
+  // Produce output code.
   std::ofstream outFile(outFileName);
   outFile << FillCodeTemplate(model_data, totalTensorBufSize, setupCode.str(),
                               evalCode.str(), usedRegistrations.size(), nOps,
@@ -434,6 +442,7 @@ static bool Run(const std::string &modelFileName,
     return interpreter.output(0)->data.f[0];
   };
 
+  // This is testing the TFLM "sine" model.
   printf("0:     %+.02f\n", Test(0));
   printf("pi/2:  %+.02f\n", Test(3.14f / 2));
   printf("pi:    %+.02f\n", Test(3.14f));
