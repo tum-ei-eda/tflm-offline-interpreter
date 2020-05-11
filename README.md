@@ -25,6 +25,22 @@ An always matching TF fork is provided. TF Lite dependencies need to be download
 
     ./tflm-offline-interpreter modelFile.tflite outFile.cpp
 
+## Usage from target code
+
+    extern void Setup();
+    extern void Eval();
+    extern void *GetInputPtr();
+    extern const void *GetOutputPtr();
+
+    int main()
+    {
+        Setup();
+        // For single float in/out such as the TFLM sine example.
+        *(float*)GetInputPtr() = in;
+        Eval();
+        float out = *(float*)GetOutputPtr();
+    }
+
 ## TODO
 
 This project is a work on progress. Important open points:
