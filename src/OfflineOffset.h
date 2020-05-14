@@ -26,8 +26,8 @@ class OfflineOffset {
   static const void *fbBase;
   static size_t fbLen;
 
-  uintptr_t m_offset;
-  Type m_type;
+  uintptr_t m_offset = 0;
+  Type m_type = Type::Null;
 };
 
 #endif

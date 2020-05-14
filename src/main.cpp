@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <regex>
 #include <set>
 #include <sstream>
 
@@ -33,7 +34,8 @@ std::string FillCodeTemplate(const std::vector<char> &fb, size_t arenaSize,
                              const std::string &evalCode, int numRegs,
                              int numOps, int numQuants, int intArrayBufSize,
                              int floatArrayBufSize, int inputTensorIndex,
-                             int outputTensorIndex) {
+                             int outputTensorIndex,
+                             const std::vector<std::string> &fakeAllocPtrs) {
   std::stringstream out;
   out << "// This file is generated. Do not edit.\n";
   {
@@ -75,13 +77,30 @@ namespace {
     out << "char g_intArrayBuf[" << intArrayBufSize << "];\n";
     out << "char g_floatArrayBuf[" << floatArrayBufSize << "];\n";
   }
-  out << R"CODE(TfLiteContext g_ctx{};
+  out << "TfLiteContext g_ctx{};\n";
+  out << "\n";
+  out << "static void *g_fakeAllocPtrs[] = {";
+  std::string emptyOrComma = "";
+  for (const auto &fakeAllocPtr : fakeAllocPtrs) {
+    out << emptyOrComma << fakeAllocPtr;
+    emptyOrComma = ", ";
+  }
+  out << "};";
+  out << R"CODE(
+static int g_fakeAllocCount = 0;
+static TfLiteStatus FakeAllocatePersistentBuffer(struct TfLiteContext* ctx,
+                                                 size_t bytes, void** ptr) {
+  *ptr = g_fakeAllocPtrs[g_fakeAllocCount++];
+  return kTfLiteOk;
+}
 } // namespace
+
 
 void Setup() {
   g_ctx.impl_ = nullptr;
   g_ctx.ReportError = nullptr;
   g_ctx.recommended_num_threads = 1;
+  g_ctx.AllocatePersistentBuffer = &FakeAllocatePersistentBuffer;
 
   // TODO: CorrectTensorEndianness -> do that offline
 
@@ -143,8 +162,8 @@ class AllocatorToGetLastAllocSize : public tflite::BuiltinDataAllocator {
  private:
   size_t lastAllocSize = 0;
 };
-size_t GetBuiltinDataSize(tflite::BuiltinOperator opType,
-                          const tflite::SubGraph *subgraph) {
+static size_t GetBuiltinDataSize(tflite::BuiltinOperator opType,
+                                 const tflite::SubGraph *subgraph) {
   // There seems to be no simple query function for this, so tickle the
   // information out of the parse function.
   auto dummyOp = subgraph->operators()->Get(0);
@@ -153,6 +172,24 @@ size_t GetBuiltinDataSize(tflite::BuiltinOperator opType,
   void *outData;
   tflite::ParseOpData(dummyOp, opType, &errReporter, &allocator, &outData);
   return allocator.GetLastAllocSize();
+}
+
+static std::string GetDeepCopyCode(void *data, size_t data_len,
+                                   const std::string &assignVarName,
+                                   const std::string &indent) {
+  static std::regex reMakeIdentifier("([\\.\\->])");
+  std::string tempVarName =
+      "buf_" +
+      std::regex_replace(assignVarName, reMakeIdentifier, std::string("_"));
+
+  std::stringstream ss;
+  if (data) {
+    ss << indent << "static char " << tempVarName
+       << "[] = " << GetByteArrayCode(data, data_len) << ";\n";
+  }
+  ss << indent << assignVarName << " = " << (data ? tempVarName : "nullptr")
+     << ";\n";
+  return ss.str();
 }
 
 // Aligns a value v to the next value aligned by align bits.
@@ -174,12 +211,66 @@ static size_t DryRunModelForAllocSize(const tflite::Model *model) {
   interpreter.AllocateTensors();
 
   size_t requiredSize = interpreter.arena_used_bytes();
-  for (int i = 0; i < interpreter.tensors_size(); i++) {
-    requiredSize +=
-        Align(interpreter.tensor(i)->bytes, (size_t)16) + sizeof(TfLiteTensor);
+  return Align(requiredSize, (size_t)16);
+}
+
+static std::vector<void *> g_loggedPersistentBuffers;
+static tflite::MicroAllocator *g_allocator;
+static int g_currentNodeIndex = -1;
+static TfLiteStatus LoggingAllocatePersistentBuffer(struct TfLiteContext *ctx,
+                                                    size_t bytes, void **ptr) {
+  auto retVal = g_allocator->AllocatePersistentBuffer(bytes, ptr);
+  assert(retVal == kTfLiteOk && "Alloc failure");
+  g_loggedPersistentBuffers.push_back(*ptr);
+  return retVal;
+}
+static TfLiteStatus LoggingRequestScratchBufferInArena(TfLiteContext *ctx,
+                                                       size_t bytes,
+                                                       int *buffer_idx) {
+  assert(false && "Not handling scratch buffers currently");
+  return g_allocator->RequestScratchBufferInArena(g_currentNodeIndex, bytes,
+                                                  buffer_idx);
+}
+static std::vector<void *> RecordAllocations(const tflite::Model *model,
+                                             const tflite::SubGraph *subgraph,
+                                             uint8_t *tensor_arena,
+                                             size_t tensorArenaSize) {
+  tflite::MicroErrorReporter error_reporter;
+  tflite::ops::micro::AllOpsResolver resolver;
+  tflite::MicroInterpreter interpreter(model, resolver, tensor_arena,
+                                       tensorArenaSize, &error_reporter);
+
+  auto ctx = GetContext(&interpreter);
+  auto allocator = GetMicroAllocator(&interpreter);
+
+  tflite::NodeAndRegistration *nodeAndRegs;
+  allocator->AllocateNodeAndRegistrations(resolver, &nodeAndRegs);
+
+  g_allocator = allocator;
+  ctx->AllocatePersistentBuffer = &LoggingAllocatePersistentBuffer;
+  ctx->RequestScratchBufferInArena = nullptr;
+  ctx->GetScratchBuffer = nullptr;
+
+  for (size_t i = 0; i < subgraph->operators()->size(); i++) {
+    auto node = &nodeAndRegs[i].node;
+    auto reg = nodeAndRegs[i].registration;
+    if (reg->init) {
+      node->user_data = reg->init(ctx, (const char *)node->builtin_data, 0);
+    }
   }
 
-  return requiredSize;
+  ctx->RequestScratchBufferInArena = &LoggingRequestScratchBufferInArena;
+
+  for (size_t i = 0; i < subgraph->operators()->size(); i++) {
+    auto node = &nodeAndRegs[i].node;
+    auto reg = nodeAndRegs[i].registration;
+    if (reg->prepare) {
+      g_currentNodeIndex = i;
+      reg->prepare(ctx, node);
+    }
+  }
+
+  return g_loggedPersistentBuffers;
 }
 
 static bool Run(const std::string &modelFileName,
@@ -206,15 +297,6 @@ static bool Run(const std::string &modelFileName,
     return false;
   }
 
-  // Run the model once to get the arena size. This is done first because TFLM
-  // will also utilize buffers that start at the end of the buffer, which we
-  // want to directly translate.
-  auto tensorArenaSize = DryRunModelForAllocSize(model);
-  std::vector<uint8_t> tensorArena(tensorArenaSize + 16);
-  uint8_t *tensor_arena = Align(tensorArena.data(), 16);
-
-  OfflineOffset::Init(tensor_arena, tensorArenaSize, model_data);
-
   auto subgraphs = model->subgraphs();
   if (subgraphs->size() != 1) {
     printf("Only 1 subgraph supported\n");
@@ -226,9 +308,23 @@ static bool Run(const std::string &modelFileName,
   auto inputTensorIndex = subgraph->inputs()->Get(0);
   auto outputTensorIndex = subgraph->outputs()->Get(0);
 
-  tflite::ops::micro::AllOpsResolver resolver;
+  // Run the model once to get the arena size. This is done first because TFLM
+  // will also utilize buffers that start at the end of the buffer, which we
+  // want to directly translate.
+  auto tensorArenaSize = DryRunModelForAllocSize(model);
+  std::vector<uint8_t> tensorArena(tensorArenaSize + 16);
+  uint8_t *tensor_arena = Align(tensorArena.data(), 16);
+
+  OfflineOffset::Init(tensor_arena, tensorArenaSize, model_data);
+
+  std::vector<std::string> fakeAllocPtrs;
+  for (const auto &buf :
+       RecordAllocations(model, subgraph, tensor_arena, tensorArenaSize)) {
+    fakeAllocPtrs.push_back(OfflineOffset(buf).getPtrCode());
+  }
 
   // Build an interpreter to run the model with.
+  tflite::ops::micro::AllOpsResolver resolver;
   tflite::MicroInterpreter interpreter(model, resolver, tensor_arena,
                                        tensorArenaSize, &error_reporter);
 
@@ -264,9 +360,7 @@ static bool Run(const std::string &modelFileName,
   setupCode << "  // Setup tensors.\n";
   setupCode << "  g_ctx.tensors_size = " << tensors->size() << ";\n";
   setupCode << "  g_ctx.tensors = (TfLiteTensor*)"
-            << OfflineOffset(tensor_arena + planner.GetMaximumMemorySize())
-                   .getPtrCode()
-            << ";\n";
+            << OfflineOffset(interpreter.tensor(0)).getPtrCode() << ";\n";
   setupCode << "  for (size_t i = 0; i < " << interpreter.tensors_size()
             << "; i++) {\n";
   setupCode << "    TfLiteTensor *tensor = &g_ctx.tensors[i];\n";
@@ -381,13 +475,9 @@ static bool Run(const std::string &modelFileName,
     setupCode << "    node.outputs = (TfLiteIntArray*)"
               << OfflineOffset(node->outputs).getPtrCode() << ";\n";
     setupCode << "    node.temporaries = nullptr;\n";
-    setupCode << "    node.user_data = nullptr;\n";
-    // TODO: ABI incompatibilities?
-    setupCode << "    static char builtin_data[] = "
-              << GetByteArrayCode(node->builtin_data,
-                                  GetBuiltinDataSize(code, subgraph))
-              << ";\n";
-    setupCode << "    node.builtin_data = builtin_data;\n";
+    setupCode << GetDeepCopyCode(node->builtin_data,
+                                 GetBuiltinDataSize(code, subgraph),
+                                 "node.builtin_data", "    ");
     setupCode << "    node.custom_initial_data = "
               << OfflineOffset(node->custom_initial_data).getPtrCode() << ";\n";
     setupCode << "    node.custom_initial_data_size = "
@@ -406,30 +496,48 @@ static bool Run(const std::string &modelFileName,
     }
   }
 
+  // Call "Init" on operations.
+  for (int i = 0; i < nOps; i++) {
+    auto &nodeAndReg = interpreter.node_and_registration(i);
+    if (nodeAndReg.registration->init) {
+      std::string nodeStr = "g_node[" + std::to_string(i) + "]";
+      std::string ptrArg = nodeAndReg.node.builtin_data
+                               ? "(const char *)" + nodeStr + ".builtin_data"
+                               : "nullptr";
+
+      // Length arg should be zero according to doc.
+      setupCode << "  " << nodeStr << ".user_data = g_regOp["
+                << opToRegistration[i] << "]->init(&g_ctx, " << ptrArg
+                << ", 0);\n";
+    }
+  }
+
+  // Call "Prepare" on operations.
+  for (int i = 0; i < nOps; i++) {
+    if (interpreter.node_and_registration(i).registration->prepare) {
+      setupCode << "  g_regOp[" << opToRegistration[i]
+                << "]->prepare(&g_ctx, &g_node[" << i << "]);\n";
+    }
+  }
+
   // Eval code: Just call into original operators.
   std::stringstream evalCode;
   for (int i = 0; i < nOps; i++) {
-    // init and free are not implemented, so don't call them.
-    if (interpreter.node_and_registration(i).registration->prepare) {
-      evalCode << "  g_regOp[" << opToRegistration[i]
-               << "]->prepare(&g_ctx, &g_node[" << i << "]);\n";
-    }
     evalCode << "  g_regOp[" << opToRegistration[i]
              << "]->invoke(&g_ctx, &g_node[" << i << "]);\n";
   }
 
-  // TODO: ABI incompatible
-  size_t totalTensorBufSize = planner.GetMaximumMemorySize() +
-                              interpreter.tensors_size() * sizeof(TfLiteTensor);
+  // TODO: If a different memory planner is used than in DryRunModel,
+  // tensorArenaSize is no longer correct and needs to be adjusted.
 
   // Produce output code.
   std::ofstream outFile(outFileName);
-  outFile << FillCodeTemplate(model_data, totalTensorBufSize, setupCode.str(),
-                              evalCode.str(), usedRegistrations.size(), nOps,
-                              numQuants, intArrayBufSize, floatArrayBufSize,
-                              inputTensorIndex, outputTensorIndex);
+  outFile << FillCodeTemplate(
+      model_data, tensorArenaSize, setupCode.str(), evalCode.str(),
+      usedRegistrations.size(), nOps, numQuants, intArrayBufSize,
+      floatArrayBufSize, inputTensorIndex, outputTensorIndex, fakeAllocPtrs);
 
-  printf("Required tensor memory: %lu\n", totalTensorBufSize);
+  printf("Required tensor memory: %lu\n", tensorArenaSize);
 
   auto Test = [&](float x_val) {
     interpreter.input(0)->data.f[0] = x_val;

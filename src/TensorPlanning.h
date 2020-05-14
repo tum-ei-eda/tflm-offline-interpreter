@@ -9,7 +9,8 @@
 
 namespace tflite {
 class MicroInterpreter;
-}
+class MicroAllocator;
+}  // namespace tflite
 
 struct TensorLifetime {
   int firstUse;
@@ -18,6 +19,10 @@ struct TensorLifetime {
 };
 
 std::vector<TensorLifetime> GetTensorLifetimes(
+    tflite::MicroInterpreter *interpreter);
+
+TfLiteContext *GetContext(tflite::MicroInterpreter *interpreter);
+tflite::MicroAllocator *GetMicroAllocator(
     tflite::MicroInterpreter *interpreter);
 
 #endif

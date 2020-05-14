@@ -237,3 +237,12 @@ std::vector<TensorLifetime> GetTensorLifetimes(
   }
   return out;
 }
+
+TfLiteContext* GetContext(tflite::MicroInterpreter* interpreter) {
+  return &interpreter->context_;
+}
+
+tflite::MicroAllocator* GetMicroAllocator(
+    tflite::MicroInterpreter* interpreter) {
+  return &interpreter->allocator_;
+}
