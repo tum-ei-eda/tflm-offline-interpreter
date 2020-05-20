@@ -8,5 +8,6 @@ ADD_EXECUTABLE(${PROJECT_NAME}
     src/OfflineOffset.cpp
     src/TensorPlanning.cpp
     src/OptimalMemPlanner.cpp
+    src/MemMap.cpp
 )
 TARGET_LINK_LIBRARIES(${PROJECT_NAME} PUBLIC tflite)

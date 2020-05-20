@@ -19,6 +19,7 @@ class OfflineOffset {
   std::string getPtrCode() const;
 
   Type getType() const { return m_type; }
+  uintptr_t getOffset() const { return m_offset; }
 
  private:
   static const void *arenaBase;

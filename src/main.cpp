@@ -1,4 +1,3 @@
-
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
@@ -8,6 +7,7 @@
 #include <set>
 #include <sstream>
 
+#include "MemMap.h"
 #include "OfflineOffset.h"
 #include "TensorPlanning.h"
 #include "tensorflow/lite/c/builtin_op_data.h"
@@ -214,14 +214,19 @@ static size_t DryRunModelForAllocSize(const tflite::Model *model) {
   return Align(requiredSize, (size_t)16);
 }
 
-static std::vector<void *> g_loggedPersistentBuffers;
+struct Allocation {
+  void *p;
+  size_t len;
+  int nodeIndex;
+};
+static std::vector<Allocation> g_loggedAllocations;
 static tflite::MicroAllocator *g_allocator;
 static int g_currentNodeIndex = -1;
 static TfLiteStatus LoggingAllocatePersistentBuffer(struct TfLiteContext *ctx,
                                                     size_t bytes, void **ptr) {
   auto retVal = g_allocator->AllocatePersistentBuffer(bytes, ptr);
   assert(retVal == kTfLiteOk && "Alloc failure");
-  g_loggedPersistentBuffers.push_back(*ptr);
+  g_loggedAllocations.push_back({*ptr, bytes, g_currentNodeIndex});
   return retVal;
 }
 static TfLiteStatus LoggingRequestScratchBufferInArena(TfLiteContext *ctx,
@@ -231,10 +236,9 @@ static TfLiteStatus LoggingRequestScratchBufferInArena(TfLiteContext *ctx,
   return g_allocator->RequestScratchBufferInArena(g_currentNodeIndex, bytes,
                                                   buffer_idx);
 }
-static std::vector<void *> RecordAllocations(const tflite::Model *model,
-                                             const tflite::SubGraph *subgraph,
-                                             uint8_t *tensor_arena,
-                                             size_t tensorArenaSize) {
+static std::vector<Allocation> RecordAllocations(
+    const tflite::Model *model, const tflite::SubGraph *subgraph,
+    uint8_t *tensor_arena, size_t tensorArenaSize) {
   tflite::MicroErrorReporter error_reporter;
   tflite::ops::micro::AllOpsResolver resolver;
   tflite::MicroInterpreter interpreter(model, resolver, tensor_arena,
@@ -255,6 +259,7 @@ static std::vector<void *> RecordAllocations(const tflite::Model *model,
     auto node = &nodeAndRegs[i].node;
     auto reg = nodeAndRegs[i].registration;
     if (reg->init) {
+      g_currentNodeIndex = i;
       node->user_data = reg->init(ctx, (const char *)node->builtin_data, 0);
     }
   }
@@ -270,11 +275,51 @@ static std::vector<void *> RecordAllocations(const tflite::Model *model,
     }
   }
 
-  return g_loggedPersistentBuffers;
+  return g_loggedAllocations;
+}
+
+static std::vector<std::string> GetTensorNames(
+    const tflite::MicroInterpreter &interpreter) {
+  std::vector<std::string> tensorNames;
+  for (int i = 0; i < interpreter.tensors_size(); i++) {
+    tensorNames.push_back("T" + std::to_string(i) + "_");
+  }
+
+  auto nOps = interpreter.operators_size();
+  for (int i = 0; i < nOps; i++) {
+    auto nodeAndReg = interpreter.node_and_registration(i);
+    auto node = &nodeAndReg.node;
+
+    if (node->inputs) {
+      for (int k = 0; k < node->inputs->size; k++) {
+        tensorNames[node->inputs->data[k]] += "L" + std::to_string(i) + "IN";
+      }
+    }
+    if (node->outputs) {
+      for (int k = 0; k < node->outputs->size; k++) {
+        tensorNames[node->outputs->data[k]] += "L" + std::to_string(i) + "OUT";
+      }
+    }
+    if (node->intermediates) {
+      for (int k = 0; k < node->intermediates->size; k++) {
+        tensorNames[node->intermediates->data[k]] +=
+            "L" + std::to_string(i) + "INT";
+      }
+    }
+    if (node->temporaries) {
+      for (int k = 0; k < node->temporaries->size; k++) {
+        tensorNames[node->temporaries->data[k]] +=
+            "L" + std::to_string(i) + "TMP";
+      }
+    }
+  }
+  return tensorNames;
 }
 
 static bool Run(const std::string &modelFileName,
                 const std::string &outFileName) {
+  MemMap memMap;
+
   tflite::MicroErrorReporter micro_error_reporter;
   tflite::ErrorReporter &error_reporter = micro_error_reporter;
 
@@ -305,6 +350,8 @@ static bool Run(const std::string &modelFileName,
   auto subgraph = (*subgraphs)[0];
   auto tensors = subgraph->tensors();
   auto operators = subgraph->operators();
+  assert(subgraph->inputs()->size() == 1 && "Unexpected number of inputs");
+  assert(subgraph->outputs()->size() == 1 && "Unexpected number of outputs");
   auto inputTensorIndex = subgraph->inputs()->Get(0);
   auto outputTensorIndex = subgraph->outputs()->Get(0);
 
@@ -318,9 +365,14 @@ static bool Run(const std::string &modelFileName,
   OfflineOffset::Init(tensor_arena, tensorArenaSize, model_data);
 
   std::vector<std::string> fakeAllocPtrs;
-  for (const auto &buf :
+  for (const auto &alloc :
        RecordAllocations(model, subgraph, tensor_arena, tensorArenaSize)) {
-    fakeAllocPtrs.push_back(OfflineOffset(buf).getPtrCode());
+    OfflineOffset offset(alloc.p);
+    fakeAllocPtrs.push_back(offset.getPtrCode());
+    assert(offset.getType() == OfflineOffset::Type::Arena &&
+           "Unexpected ptr loc");
+    memMap.record(offset, alloc.len,
+                  "PersistentBuffer_L" + std::to_string(alloc.nodeIndex));
   }
 
   // Build an interpreter to run the model with.
@@ -337,6 +389,8 @@ static bool Run(const std::string &modelFileName,
     error_reporter.Report("AllocateTensors() failed");
     return false;
   }
+
+  auto tensorNames = GetTensorNames(interpreter);
 
   // Run memory planning. Planner may be replaced with a custom one.
   std::vector<uint8_t> plannerBuf(1024);
@@ -357,6 +411,10 @@ static bool Run(const std::string &modelFileName,
   int intArrayBufSize = 0;
   int floatArrayBufSize = 0;
 
+  size_t tensorStructsSz = interpreter.tensors_size() * sizeof(TfLiteTensor);
+  memMap.record(OfflineOffset(interpreter.tensor(0)), tensorStructsSz,
+                "TensorStructs");
+
   setupCode << "  // Setup tensors.\n";
   setupCode << "  g_ctx.tensors_size = " << tensors->size() << ";\n";
   setupCode << "  g_ctx.tensors = (TfLiteTensor*)"
@@ -375,6 +433,8 @@ static bool Run(const std::string &modelFileName,
                                  &bufferOffset);
       tensorDataOffset.set(tensor_arena + bufferOffset);
     }
+    memMap.record(tensorDataOffset, interpreter.tensor(i)->bytes,
+                  tensorNames[i]);
 
     std::string tensorI = "  g_ctx.tensors[" + std::to_string(i) + "]";
     setupCode << tensorI << ".data.data = (void*)"
@@ -398,8 +458,6 @@ static bool Run(const std::string &modelFileName,
     auto quant = tensors->Get(i)->quantization();
     if (quant && quant->scale() && quant->scale()->size() > 0 &&
         quant->zero_point() && quant->zero_point()->size() > 0) {
-      printf("tensor has quantization!\n");
-
       setupCode << tensorI << ".params.scale = " << quant->scale()->Get(0)
                 << ";\n";
       setupCode << tensorI << ".params.zero_point = "
@@ -556,6 +614,8 @@ static bool Run(const std::string &modelFileName,
   printf("pi:    %+.02f\n", Test(3.14f));
   printf("3pi/2: %+.02f\n", Test((3 * 3.14f) / 2));
   printf("2pi:   %+.02f\n", Test(2 * 3.14f));
+
+  memMap.report();
 
   return true;
 }
