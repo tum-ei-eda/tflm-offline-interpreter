@@ -1,8 +1,73 @@
-SET(TF_SRC "/data/work/code/tensorflow" CACHE STRING "TensorFlow source directory")
+IF(NOT TF_SRC)
+    INCLUDE(FetchContent)
+    FetchContent_Declare(
+        tf 
+        GIT_REPOSITORY https://github.com/tensorflow/tensorflow.git
+        GIT_PROGRESS true
+        QUIET
+        )
+    FetchContent_GetProperties(tf)
+    IF(NOT tf_POPULATED)
+        MESSAGE(STATUS "TensorFlow sources not given/populated, fetching from GH...")
+        FetchContent_Populate(tf)
+    ENDIF()
+    SET(TF_SRC ${tf_SOURCE_DIR})
+
+    FetchContent_Declare(
+        flatbuffers 
+        GIT_REPOSITORY https://github.com/google/flatbuffers.git 
+        GIT_PROGRESS true 
+        QUIET
+        )
+    FetchContent_GetProperties(flatbuffers)
+    IF(NOT flatbuffers_POPULATED)
+        MESSAGE(STATUS "Now getting 'flatbuffers'...")
+        FetchContent_Populate(flatbuffers)
+    ENDIF()
+    LIST(APPEND TFL_INC_DIRS ${flatbuffers_SOURCE_DIR}/include)
+
+    FetchContent_Declare(
+        fixedpoint 
+        GIT_REPOSITORY https://github.com/google/gemmlowp.git 
+        GIT_PROGRESS true 
+        QUIET 
+        )
+    FetchContent_GetProperties(fixedpoint)
+    IF(NOT fixedpoint_POPULATED)
+        MESSAGE(STATUS "And finaly 'fixedpoint'...")
+        FetchContent_Populate(fixedpoint)
+    ENDIF()
+    LIST(APPEND TFL_INC_DIRS ${fixedpoint_SOURCE_DIR})
+
+    FetchContent_Declare(
+        ruy 
+        GIT_REPOSITORY https://github.com/google/ruy.git 
+        GIT_PROGRESS true 
+        QUIET 
+        )
+    FetchContent_GetProperties(ruy)
+    IF(NOT ruy_POPULATED)
+        MESSAGE(STATUS "Oh we also need 'ruy'...")
+        FetchContent_Populate(ruy)
+    ENDIF()
+    LIST(APPEND TFL_INC_DIRS ${ruy_SOURCE_DIR})
+ENDIF()
 
 SET(TFL_SRC ${TF_SRC}/tensorflow/lite)
 SET(TFLM_SRC ${TFL_SRC}/micro)
 SET(TFLD_SRC ${TFL_SRC}/tools/make/downloads)
+
+IF(EXISTS ${TFLD_SRC}/flatbuffers/include)
+    LIST(APPEND TFL_INC_DIRS ${TFLD_SRC}/flatbuffers/include)
+ENDIF()
+
+IF(EXISTS ${TFLD_SRC}/gemmlowp)
+    LIST(APPEND ${TFLD_SRC}/gemmlowp)
+ENDIF()
+
+LIST(APPEND TFL_INC_DIRS 
+    ${TF_SRC}
+    )
 
 ADD_LIBRARY(tflite STATIC
     # Not really needed?
@@ -66,10 +131,9 @@ ADD_LIBRARY(tflite STATIC
     ${TFL_SRC}/core/api/op_resolver.cc
 )
 TARGET_INCLUDE_DIRECTORIES(tflite PUBLIC
-    ${TF_SRC}
-    ${TFLD_SRC}/flatbuffers/include
-    ${TFLD_SRC}/gemmlowp
+    ${TFL_INC_DIRS}
 )
+
 TARGET_COMPILE_DEFINITIONS(tflite PUBLIC
     TF_LITE_USE_GLOBAL_CMATH_FUNCTIONS
     TF_LITE_STATIC_MEMORY
