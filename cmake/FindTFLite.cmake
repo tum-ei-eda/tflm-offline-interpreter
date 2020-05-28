@@ -1,11 +1,22 @@
 IF(NOT TF_SRC)
     INCLUDE(FetchContent)
-    FetchContent_Declare(
-        tf 
-        GIT_REPOSITORY https://github.com/tensorflow/tensorflow.git
-        GIT_PROGRESS true
-        QUIET
-        )
+    IF(TF_TAG)
+        MESSAGE(STATUS "Getting TF tag '${TF_TAG}' and not master")
+        FetchContent_Declare(
+            tf 
+            GIT_REPOSITORY https://github.com/tensorflow/tensorflow.git
+            GIT_PROGRESS FALSE
+            GIT_TAG ${TF_TAG}
+            QUIET
+            )
+    ELSE()
+        FetchContent_Declare(
+            tf 
+            GIT_REPOSITORY https://github.com/tensorflow/tensorflow.git
+            GIT_PROGRESS FALSE
+            QUIET
+            )
+    ENDIF()
     FetchContent_GetProperties(tf)
     IF(NOT tf_POPULATED)
         MESSAGE(STATUS "TensorFlow sources not given/populated, fetching from GH...")
@@ -16,7 +27,7 @@ IF(NOT TF_SRC)
     FetchContent_Declare(
         flatbuffers 
         GIT_REPOSITORY https://github.com/google/flatbuffers.git 
-        GIT_PROGRESS true 
+        GIT_PROGRESS FALSE 
         QUIET
         )
     FetchContent_GetProperties(flatbuffers)
@@ -29,7 +40,7 @@ IF(NOT TF_SRC)
     FetchContent_Declare(
         fixedpoint 
         GIT_REPOSITORY https://github.com/google/gemmlowp.git 
-        GIT_PROGRESS true 
+        GIT_PROGRESS FALSE 
         QUIET 
         )
     FetchContent_GetProperties(fixedpoint)
@@ -42,7 +53,7 @@ IF(NOT TF_SRC)
     FetchContent_Declare(
         ruy 
         GIT_REPOSITORY https://github.com/google/ruy.git 
-        GIT_PROGRESS true 
+        GIT_PROGRESS FALSE 
         QUIET 
         )
     FetchContent_GetProperties(ruy)
