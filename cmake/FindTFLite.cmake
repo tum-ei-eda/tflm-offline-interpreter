@@ -122,9 +122,6 @@ ADD_LIBRARY(tflite STATIC
     ${TFLM_SRC}/kernels/dequantize.cc
     ${TFLM_SRC}/kernels/conv.cc
     ${TFLM_SRC}/kernels/reduce.cc
-    ${TFLM_SRC}/kernels/sub.cc
-    ${TFLM_SRC}/kernels/resize_nearest_neighbor.cc
-    ${TFLM_SRC}/kernels/l2norm.cc
     # Kernel deps
     ${TFLM_SRC}/micro_utils.cc
     ${TFL_SRC}/kernels/internal/quantization_util.cc
