@@ -80,7 +80,7 @@ LIST(APPEND TFL_INC_DIRS
     ${TF_SRC}
     )
 
-ADD_LIBRARY(tflite STATIC
+SET(TFL_SRCS
     # Not really needed?
     ${TFLM_SRC}/micro_error_reporter.cc
     ${TFLM_SRC}/debug_log.cc
@@ -137,7 +137,12 @@ ADD_LIBRARY(tflite STATIC
     ${TFL_SRC}/core/api/tensor_utils.cc
     ${TFL_SRC}/core/api/flatbuffer_conversions.cc
     ${TFL_SRC}/core/api/op_resolver.cc
+    )
+
+ADD_LIBRARY(tflite STATIC
+    ${TFL_SRCS}
 )
+
 TARGET_INCLUDE_DIRECTORIES(tflite PUBLIC
     ${TFL_INC_DIRS}
 )
@@ -148,3 +153,15 @@ TARGET_COMPILE_DEFINITIONS(tflite PUBLIC
     TFLITE_EMULATE_FLOAT
     "$<$<CONFIG:RELEASE>:TF_LITE_STRIP_ERROR_STRINGS>"
 )
+
+SET(TFLite_INCLUDE_DIRS 
+    ${TFL_INC_DIRS}
+    )
+
+SET(TFLite_SOURCES 
+    ${TFL_SRCS}
+    )
+
+INCLUDE(FindPackageHandleStandardArgs)
+
+FIND_PACKAGE_HANDLE_STANDARD_ARGS(TFLite DEFAULT_MSG TFLite_INCLUDE_DIRS TFLite_SOURCES)
