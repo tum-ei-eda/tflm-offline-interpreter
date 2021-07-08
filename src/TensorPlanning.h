@@ -3,6 +3,7 @@
 
 #include <vector>
 
+#include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/core/api/error_reporter.h"
 #include "tensorflow/lite/core/api/flatbuffer_conversions.h"
 #include "tensorflow/lite/core/api/tensor_utils.h"

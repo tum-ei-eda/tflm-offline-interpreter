@@ -5,7 +5,7 @@ This project runs the TFLM interpreter off-target to produce static code that is
 ## Dependencies
 
 - CMake 3.13
-- Tensorflow 2.2
+- Tensorflow 2.2 (CMake will pull source by default, see below)
 
 An always matching TF fork is provided. TF Lite dependencies need to be downloaded first:
 
@@ -15,10 +15,21 @@ An always matching TF fork is provided. TF Lite dependencies need to be download
     cd tensorflow/lite/tools/make
     ./download_dependencies.sh
 
+Otherwise you can run CMake without providing TF source files and CMake FetchContent will pull
+the required sources for you.
+
 ## Building
+
+### With your own TensorFlow sources
 
     mkdir build && cd build
     cmake -DTF_SRC=/path/to/tf ..
+    make
+
+### Auto-fetching TensorFlow sources
+
+    mkdir build && cd build
+    cmake ..
     make
 
 ## Running
